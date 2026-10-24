@@ -1,169 +1,95 @@
-# WindLens
+WindLens
+WindLens is a dashboard for comparing day-ahead wind generation forecasts with actual wind generation in Great Britain. It helps users review forecast performance for a selected delivery date.
 
-WindLens is a pilot day-ahead wind forecasting workspace for a Great Britain electricity procurement team. It displays the latest Elexon national wind forecast available at a configured decision snapshot and scores that forecast against realized generation.
+Live app: https://windlens-rxjo.onrender.com/
+Health check: https://windlens-rxjo.onrender.com/api/health
 
-This is a decision-support prototype, not a trading recommendation. It does not include demand, prices, thermal generation, other fuel types, or non-Elexon datasets.
+WindLens is a decision-support prototype. It does not make trading decisions or recommend how much electricity to buy.
+What it does
+- Lets users select a delivery date in January 2026.
+- Retrieves forecast and actual wind-generation data from the Elexon API.
+- Shows forecast and actual values on a graph, with an interval table.
+- Reports MAE, RMSE, signed bias, WAPE, and data coverage.
+- Caches Elexon responses in memory for one hour.
+- Displays upstream API errors rather than treating failed requests as valid results.
+Data and assumptions
+- Date range: 1–31 January 2026.
+- Forecast data: WINDFOR.
+- Actual data: FUELHH, filtered to fuelType=WIND.
+- Forecast cutoff: 10:00 Europe/London on the day before delivery. This is a configurable pilot assumption, not a confirmed trading deadline.
+- Time intervals: WINDFOR records are hourly and FUELHH records are half-hourly. The app averages the two half-hourly actual values to compare them with an hourly forecast. Missing values are not interpolated.
+- Metrics: Calculated only for intervals that have both forecast and actual values. Signed bias is forecast minus actual.
+The app uses Elexon data directly at runtime; it is not intended to present sample values as real data.
 
-## Product decisions and assumptions
+Elexon references:
+- FUELHH dataset documentation
+- WINDFOR dataset documentation
+How it works
+1. The user selects a date in the dashboard.
+2. The React frontend requests GET /api/analysis?date=YYYY-MM-DD.
+3. FastAPI checks the requested date, fetches the relevant Elexon data, and caches responses for one hour.
+4. The analytics code selects the latest eligible forecast publication for each delivery interval at or before the configured cutoff.
+5. Hourly forecast intervals are aligned with actual generation, and the metrics are calculated for matched intervals.
+6. The frontend displays the graph, metrics, coverage, and issue timestamps.
+Project structure
+Path	Purpose
+backend/app/main.py	FastAPI routes, Elexon API access, caching, date validation, and serving the built frontend
+backend/app/analytics.py	Forecast selection, interval alignment, and accuracy metrics
+backend/tests/test_analytics.py	Tests for cutoff selection and missing-data handling
+backend/requirements.txt	Python dependencies
+frontend/src/App.tsx	Dashboard, date selection, charts, metrics, and interval table
+frontend/src/style.css	Dashboard styling
+frontend/src/main.tsx	React entry point
+frontend/package.json	Frontend scripts and dependencies
+frontend/vite.config.ts	Local development API proxy
+Dockerfile	Builds the frontend and packages the backend into one image
+docker-compose.yml	Local Docker Compose configuration
+.dockerignore	Files excluded from the Docker build context
 
-- Scope is limited to delivery dates from **1–31 January 2026**.
-- The pilot snapshot cutoff is **10:00 Europe/London on the day before delivery**. It is an explicit, configurable assumption for the demo—not a claim that this is the client's approved trading deadline.
-- The application selects the most recently published `WINDFOR` value per delivery interval at or before that cutoff.
-- Actuals come from `FUELHH` with `fuelType=WIND`; forecasts come from `WINDFOR`.
-- The observed WINDFOR records are hourly while FUELHH actuals are half-hourly. To compare like with like, the app averages the two 30-minute actual values in each hourly forecast interval. It reports coverage and forecast cadence; it does not interpolate missing data.
-- Metrics are calculated only for intervals with both a forecast and actual: mean absolute error (MAE), root mean squared error (RMSE), signed bias (forecast minus actual), and weighted absolute percentage error (WAPE).
-- The Elexon API is queried directly at runtime; no sample or synthetic generation data is presented as real.
-- Source references: [Elexon FUELHH documentation](https://bmrs.elexon.co.uk/api-documentation/endpoint/datasets/FUELHH/stream) and [Elexon WINDFOR documentation](https://bmrs.elexon.co.uk/api-documentation/endpoint/datasets/WINDFOR/stream).
 
-## Contents
+Deployment on Render
+The live app is deployed on Render as one Docker web service. The service uses the root Dockerfile to build the React frontend and run the FastAPI backend. The backend serves the frontend and API from the same origin.
 
-| Path | Purpose |
-| --- | --- |
-| `backend/app/main.py` | FastAPI routes, Elexon API access, caching, January scope guard, and production static-file serving |
-| `backend/app/analytics.py` | Forecast version selection, interval alignment, and accuracy metrics |
-| `backend/tests/test_analytics.py` | Unit tests for cutoff selection and missing-data handling |
-| `backend/requirements.txt` | Python runtime dependencies |
-| `frontend/src/App.tsx` | React dashboard, date selection, charts, metrics, and interval table |
-| `frontend/src/style.css` | Responsive dashboard styling |
-| `frontend/src/main.tsx` | React application entry point |
-| `frontend/package.json` | Frontend scripts and dependencies |
-| `frontend/vite.config.ts` | Development API proxy configuration |
-| `Dockerfile` | Multi-stage frontend build and Python application image |
-| `docker-compose.yml` | Local Docker Compose configuration |
-| `.dockerignore` | Excludes local dependencies and build output from the Docker context |
-
-## Architecture and analysis
-
-The browser requests `GET /api/analysis?date=YYYY-MM-DD`. FastAPI rejects dates outside January 2026, fetches wind actuals and forecast history from the two Elexon datasets, and caches each Elexon response in memory for one hour. The analytics layer keeps the latest forecast publication per target interval at or before the configured UK-local cutoff, aligns hourly WINDFOR intervals to the mean of their two half-hour FUELHH actuals, and returns interval data plus summary metrics. The React view renders the forecast/actual comparison, coverage, metrics, and issue timestamps. Upstream failures are returned as explicit API errors and shown in the UI.
-
-## Video walkthrough outline
-
-Keep the combined recording at or under 10 minutes. Suggested talking points:
-
-### Part 1 — buyer-facing product walkthrough (up to 5 minutes)
-
-1. **0:00–0:45:** Frame the use case: the desk needs a trustworthy national wind view before a day-ahead procurement decision; show the delivery-date selector.
-2. **0:45–1:45:** Explain the selected snapshot and cutoff, and show the timestamp of the latest forecast issue actually used.
-3. **1:45–3:00:** Walk the forecast-versus-actual chart and interval table; explain hourly forecasts are compared with aligned half-hourly actual averages.
-4. **3:00–4:15:** Explain MAE, RMSE, WAPE, signed bias, and coverage in plain language; connect error size and direction to procurement risk without presenting a trading recommendation.
-5. **4:15–5:00:** Be candid about scope: national wind only, no demand or market prices, and confirm the cutoff/alignment with the client before operational use.
-
-### Part 2 — technical lead handoff (up to 5 minutes)
-
-1. **0:00–1:00:** Show the React → FastAPI → Elexon request/data flow and identify the main source files from the contents table.
-2. **1:00–2:00:** Explain the `FUELHH`/`WINDFOR` filters, London time cutoff, per-interval latest-publication selection, and one-hour cache.
-3. **2:00–3:00:** Explain hourly/half-hourly alignment, the metric formulas, missing-data behavior, and coverage denominator.
-4. **3:00–4:00:** Show the unit tests, frontend production build, dependency audit, API health endpoint, and explicit upstream error handling.
-5. **4:00–5:00:** Show Docker Compose and the Heroku-compatible image setup; call out deployment not yet configured, plus the assumptions to validate before production.
-
-## Run locally
-
-### Docker (recommended)
-
-```powershell
+Deployment settings:
+1. Connect the public GitHub repository to a new Render Web Service.
+2. Choose Docker as the runtime and keep the root directory as ..
+3. Set DECISION_CUTOFF_LOCAL=10:00.
+4. Set CACHE_TTL_SECONDS=3600.
+5. Set the health check path to /api/health, if available.
+6. Deploy and verify the live app and health endpoint.
+The Render free service may sleep while idle, so the first request after a period of inactivity can take longer.
+Run locally
+Using Docker
+From the project root, run:
 docker compose up --build
-```
+Then open http://localhost:8000. The health endpoint is http://localhost:8000/api/health.
+Running the frontend and backend separately
+You need Python 3.11+ and Node.js 20+.
 
-Open [http://localhost:8000](http://localhost:8000). Check service status at [http://localhost:8000/api/health](http://localhost:8000/api/health).
-
-### Run frontend and backend separately
-
-Python 3.11+ and Node.js 20+ are required.
-
-```powershell
+In PowerShell, from the project root:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r backend\requirements.txt
 uvicorn backend.app.main:app --reload --port 8000
-```
-
 In a second terminal:
-
-```powershell
 cd frontend
 npm install
 npm run dev
-```
+Open http://localhost:5173. The Vite development server proxies /api requests to the backend on port 8000.
+Configuration
+Variable	Default	Purpose
+DECISION_CUTOFF_LOCAL	10:00	Forecast snapshot cutoff in Europe/London local time (HH:MM)
+CACHE_TTL_SECONDS	3600	Elexon response cache duration in seconds
+CORS_ORIGINS	http://localhost:5173	Comma-separated allowed browser origins
+VITE_API_BASE_URL	Empty (same origin)	Optional API origin when frontend and backend are hosted separately
 
-Open [http://localhost:5173](http://localhost:5173). The Vite development server proxies `/api` requests to port 8000.
 
-## Publish to GitHub
-
-First create a **public, empty** repository on GitHub (do not initialize it with a README, license, or `.gitignore`). Choose a short random repository name. In PowerShell, from the project root:
-
-```powershell
-git init -b main
-git add .
-git status
-git commit -m "Build WindLens pilot dashboard"
-git remote add origin https://github.com/YOUR_GITHUB_USERNAME/YOUR_RANDOM_REPO_NAME.git
-git push -u origin main
-```
-
-Replace the two `YOUR_...` placeholders with your GitHub details. Before `git add .`, make sure you have not saved credentials, tokens, or private configuration files in the project. Check `git status`; `.venv`, `node_modules`, and `.env` are ignored. GitHub will prompt you to authenticate when pushing. Afterward, refresh the repository page and confirm the code and README are public.
-
-## Configuration
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `DECISION_CUTOFF_LOCAL` | `10:00` | Local Europe/London snapshot cutoff (`HH:MM`) |
-| `CACHE_TTL_SECONDS` | `3600` | In-memory Elexon response cache duration |
-| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed browser origins |
-| `VITE_API_BASE_URL` | empty (same-origin) | Frontend build-time API origin; set only when the frontend and backend are hosted separately |
-
-## Validation
-
-Run the backend unit tests:
-
-```powershell
+Tests and build
+Run backend unit tests:
 python -m unittest discover -s backend\tests
-```
-
 Build the frontend:
-
-```powershell
 cd frontend
 npm run build
-```
 
-## Deployment
-
-The root Dockerfile can be used as a container deployment on Heroku or any Docker host. For Heroku, create an app, configure the Container stack, then push the image using Heroku's container registry. Set `DECISION_CUTOFF_LOCAL` to the cutoff agreed with the client. Elexon must be reachable from the deployed application.
-
-### Render (recommended: one full-stack Docker service)
-
-1. Push the project to GitHub using the steps above.
-2. In Render, choose **New + → Web Service**, connect GitHub, and select the repository.
-3. Select **Docker** as the runtime. Leave the root directory as `.` and use the root `Dockerfile`.
-4. Add `DECISION_CUTOFF_LOCAL=10:00` and `CACHE_TTL_SECONDS=3600` under environment variables.
-5. Set the health check path to `/api/health` if that setting is available, then create the service.
-6. Wait for the Docker build and deploy to finish. Open the `onrender.com` URL: the Python service serves both the React app and API on the same origin.
-7. Verify the app loads real data and `/api/health` responds with `{"status":"ok"}`. Render's free service may sleep while idle; its first request afterward can take longer.
-
-### Vercel frontend + Render backend (optional split deployment)
-
-Vercel deploys the React frontend; it does **not** run this app's Docker image as a container. Deploy the project to Render as a Docker web service first, then use:
-
-1. Create a Vercel project from the same GitHub repository and set its **Root Directory** to `frontend`.
-2. Set the Vercel environment variable `VITE_API_BASE_URL` to your Render service origin, for example `https://your-service.onrender.com` (no trailing slash). Redeploy after setting it; Vite reads this value at build time.
-3. In Render, add `CORS_ORIGINS` with your exact Vercel origin, for example `https://your-project.vercel.app`. If you use a Vercel preview domain, include each origin you need, separated by commas.
-4. Open the Vercel URL and verify the dashboard can load data. The Render URL also serves the dashboard; the Vercel URL is the separate frontend deployment.
-5. Test both public URLs in a private/incognito browser window.
-
-Choose one public demo URL for your submission (usually the Vercel URL if using the split deployment).
-
-**Hosted demo URL:** not deployed yet. Deployment requires access to your GitHub and hosting accounts. Replace this line with the final public URL after deployment and verify it in a private/incognito browser window.
-
-## Demo and submission checklist
-
-This workspace build does not create or publish a public GitHub repository, deploy a hosted application, record/upload a YouTube video, or submit the company's form. Those actions require your personal accounts, final client-approved settings, and permission to publish. Before submission:
-
-1. Create a public repository with an anonymous name and push this code.
-2. Deploy the Docker image and replace the hosted demo URL above.
-3. Record a video no longer than 10 minutes: up to 5 minutes for the buyer-facing product walkthrough and up to 5 minutes for technical architecture, data handling, analytics, tests, and limitations. Upload it as unlisted and test its access in a private browser.
-4. Open the public repository, hosted app, and unlisted video in a private/incognito browser, then complete the submission form.
-5. Agree with the client on the decision cutoff and confirm hourly forecast alignment before treating metrics as operational.
-
-## AI assistance
-
-AI tools were used to assist with the initial application design and implementation. Review the data assumptions and validate the live Elexon responses before using this pilot operationally.
+Before operational use
+The January 2026 date range and 10:00 Europe/London cutoff are pilot assumptions. Confirm the cutoff and interval-alignment approach with the intended users before using the metrics for operational decisions.
