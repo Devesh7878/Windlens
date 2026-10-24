@@ -1,0 +1,8 @@
+services:
+  windlens:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DECISION_CUTOFF_LOCAL: "10:00"
+      CACHE_TTL_SECONDS: "3600"
